@@ -26,11 +26,18 @@
 
 
 (defmacro defcomponent [name [& fields] & opts+specs]
-  `(defrecord ~name [ ~@fields]
-     ~@(clojure.walk/postwalk-replace
-         (into {} (for [field fields]
-                    [field `(deref ~field)]))
-         opts+specs)))
+  `(do
+     (defrecord ~name [ ~@fields]
+       ~@(clojure.walk/postwalk-replace
+           (into {} (for [field fields]
+                      [field `(deref ~field)]))
+           opts+specs))
+     (defn ~(symbol (.toLowerCase (clojure.core/name name))) [~@fields]
+       (~(symbol (str (clojure.core/name name) "."))
+        ~@(for [field fields]
+            `(if (instance? clojure.lang.IDeref ~field)
+               ~field
+               (ref ~field))) ))))
 
 (defn quad []
   (push-matrix
@@ -123,26 +130,26 @@
       font)))
 
 (defcomponent Label [text]
-   IBounds
-   (-bounds [_]
-            (let [f (or *font* (font "Tahoma" :size 20))]
-              [(.getWidth f text)
-               (.getHeight f text)]))
+  IBounds
+  (-bounds [_]
+    (let [f (or *font* (font "Tahoma" :size 20))]
+      [(.getWidth f text)
+       (.getHeight f text)]))
 
-   IDraw
-   (draw [this]
-         (with-font (or *font* (font "Tahoma" :size 20))
-           (try-with-program
-            nil
-            (with-disabled [:texture-rectangle :lighting]
-              (with-enabled [:texture-2d :blend]
-                (let [blend-dst (get-integer :blend-dst)
-                      blend-src (get-integer :blend-src)]
-                  (blend-func :src-alpha :one-minus-src-alpha)
-                  (TextureImpl/bindNone)
-                  (.drawString *font* 0 0 text)
-                  (blend-func blend-src blend-dst)))))))
-   )
+  IDraw
+  (draw [this]
+    (with-font (or *font* (font "Tahoma" :size 20))
+      (try-with-program
+       nil
+       (with-disabled [:texture-rectangle :lighting]
+         (with-enabled [:texture-2d :blend]
+           (let [blend-dst (get-integer :blend-dst)
+                 blend-src (get-integer :blend-src)]
+             (blend-func :src-alpha :one-minus-src-alpha)
+             (TextureImpl/bindNone)
+             (.drawString *font* 0 0 text)
+             (blend-func blend-src blend-dst)))))))
+  )
 
 (defcomponent Group [drawables]
   IDraw
@@ -152,6 +159,8 @@
   IChildren
   (-children [this]
     (map deref drawables)))
+(defn group [drawables]
+  (Group. (ref (map ref drawables))))
 
 
 (defcomponent Widget [drawable x y]
@@ -171,26 +180,16 @@
      (draw drawable))))
 
 
-(def widgets (atom (Group. (ref []))))
-
-(def mys (ref "hi"))
-(dosync
- (ref-set mys "adsfadsf"))
 
 
 
-(defcomponent Transform [rval f]
+(defcomponent Transform [f rval]
   clojure.lang.IDeref
   (deref [this]
     (f rval)))
 
-
-
 (defmethod print-method Transform [v ^java.io.Writer w]
   (.write w "<Transform>"))
-(defn transform [rval f]
-  (Transform. rval f))
-
 
 (defcomponent Path [points]
   IBounds
@@ -204,12 +203,14 @@
      (doseq [[x y] points]
        (vertex x y)))))
 
+(def mys (ref "hi"))
+(def widgets (atom (group [])))
+(reset! widgets (group [(widget (label mys) 100 100)
+                        (widget (label (transform #(str "count: " (count %)) mys))
+                                100 200)
+                        (path [[100 100] [200 200]])
+                        ]))
 
-
-
-(def label (Widget. (ref (Label. mys)) (ref 100) (ref 100)))
-(def label2 (Widget. (ref (Label. (transform mys (ref #(str "count: " (count %)))))) (ref 100) (ref 200)))
-(reset! widgets (Group. (ref [(ref label) (ref label2) (ref (Path. (ref [[100 100] [200 200]])))])))
 
 (defn print-vars
   ([]
@@ -232,14 +233,9 @@
          obj))))
 
 
-
-
-
 (defn update-state [state]
   (-> state
-      (assoc :widgets @widgets)
-      
-      ))
+      (assoc :widgets @widgets)))
 
 (defn init [state]
   (render-mode :wireframe)
