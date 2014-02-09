@@ -2,17 +2,30 @@
   (:use [penumbra.opengl]
         [penumbra.utils :only [defn-memo]])
   (:require [penumbra.app :as app]
+            [penumbra.app.event :as event]
             [penumbra.app.loop :as loop]
             [penumbra.opengl.core :refer [get-integer]]
             [penumbra.app.controller :as controller]
             [clojure.walk]
-            [clojure.core.async :as async :refer [go >! <! chan thread timeout]])
+            [clojure.core.async :as async :refer [go
+                                                  >!
+                                                  <!
+                                                  <!!
+                                                  >!!
+                                                  chan
+                                                  thread
+                                                  timeout
+                                                  mult
+                                                  tap
+                                                  close!
+                                                  put!
+                                                  take!]])
   (:import [java.awt Font]
            [java.awt.font TextAttribute]
            [org.newdawn.slick TrueTypeFont]
            [org.newdawn.slick.opengl TextureImpl])
   (:import [java.awt Font]
-
+           [java.util Date]
 
            [org.newdawn.slick.opengl TextureImpl])
   (:gen-class))
@@ -28,10 +41,18 @@
 (defmacro defcomponent [name [& fields] & opts+specs]
   `(do
      (defrecord ~name [ ~@fields]
-       ~@(clojure.walk/postwalk-replace
-           (into {} (for [field fields]
-                      [field `(deref ~field)]))
-           opts+specs))
+       ~@(->> opts+specs
+           (clojure.walk/postwalk-replace
+            (into {} (for [field fields]
+                       [field `(deref ~field)])))
+           (clojure.walk/postwalk
+            (fn [form]
+              (if (and (seq? form)
+                       (= 'clojure.core/unquote (first form)))
+                (-> form
+                    second
+                    second)
+                form)))))
      (defn ~(symbol (.toLowerCase (clojure.core/name name))) [~@fields]
        (~(symbol (str (clojure.core/name name) "."))
         ~@(for [field fields]
@@ -67,12 +88,14 @@
 (defprotocol IDraw
   (draw [this]))
 
+(defprotocol IComponent)
+
 (defprotocol IBounds
   (-bounds [this]))
 
 (defn bounds [x]
-  (when-not (or (satisfies? IBounds x) (satisfies? IDraw x))
-    (throw (Exception. (str "Expecting IBounds or IDraw, got " x))))
+  (when-not (satisfies? IBounds x) (satisfies? IComponent x)
+    (throw (Exception. (str "Expecting IBounds or IComponent, got " x))))
   (if (satisfies? IBounds x)
     (-bounds x)
     [0 0]))
@@ -81,8 +104,8 @@
   (-origin [this]))
 
 (defn origin [x]
-  (when-not (or (satisfies? IOrigin x) (satisfies? IDraw x))
-    (throw (Exception. (str "Expecting IOrigin or IDraw, got " x))))
+  (when-not (or (satisfies? IOrigin x) (satisfies? IComponent x))
+    (throw (Exception. (str "Expecting IOrigin or IComponent, got " x))))
   (if (satisfies? IOrigin x)
     (-origin x)
     [0 0]))
@@ -91,8 +114,8 @@
   (-children [this]))
 
 (defn children [x]
-  (when-not (or (satisfies? IChildren x) (satisfies? IDraw x))
-    (throw (Exception. (str "Expecting IChildren or IDraw, got " x))))
+  (when-not (or (satisfies? IChildren x) (satisfies? IComponent x))
+    (throw (Exception. (str "Expecting IChildren or IComponent, got " x))))
   (if (satisfies? IChildren x)
     (-children x)
     []))
@@ -130,6 +153,7 @@
       font)))
 
 (defcomponent Label [text]
+  IComponent
   IBounds
   (-bounds [_]
     (let [f (or *font* (font "Tahoma" :size 20))]
@@ -152,24 +176,28 @@
   )
 
 (defcomponent Group [drawables]
+  IComponent
   IDraw
   (draw [this]
     (doseq [drawable drawables]
       (draw @drawable)))
   IChildren
   (-children [this]
-    (map deref drawables)))
+    drawables))
 (defn group [drawables]
   (Group. (ref (map ref drawables))))
 
 
+
+
 (defcomponent Widget [drawable x y]
+  IComponent
   IOrigin
   (-origin [this]
     [x y])
   IChildren
   (-children [this]
-    [drawable])
+    [~drawable])
   IBounds
   (-bounds [this]
     (bounds drawable))
@@ -178,9 +206,6 @@
     (push-matrix
      (translate x y 0)
      (draw drawable))))
-
-
-
 
 
 (defcomponent Transform [f rval]
@@ -192,6 +217,7 @@
   (.write w "<Transform>"))
 
 (defcomponent Path [points]
+  IComponent
   IBounds
   (-bounds [this]
     (let [maxx (apply max (map first points))
@@ -200,49 +226,55 @@
   IDraw
   (draw [this]
     (draw-lines
-     (doseq [[x y] points]
-       (vertex x y)))))
+     (doseq [[[x1 y1] [x2 y2]] (map vector points (rest points))]
+       (vertex x1 y1)
+       (vertex x2 y2)))))
+
+(defn rectangle [width height]
+  (path (transform (fn [[width height]]
+                     [[0 0] [0 height] [width height] [width 0] [0 0]])
+                   [width height])))
 
 (def mys (ref "hi"))
-(def widgets (atom (group [])))
-(reset! widgets (group [(widget (label mys) 100 100)
-                        (widget (label (transform #(str "count: " (count %)) mys))
-                                100 200)
-                        (path [[100 100] [200 200]])
-                        ]))
+(def root-component (ref (group [])))
+(dosync
+ (ref-set root-component (group [(widget (label mys) 100 100)
+                                 (widget (label (transform #(str "count: " (count %)) mys))
+                                         100 200)
+                                 (path [[100 100] [200 200]])
+                                 (widget (rectangle 100 200) 300 300)
+                                 ])))
 
 
-(defn print-vars
-  ([]
-     (doseq [[i widget] (map-indexed vector @widgets)]
-       (print-vars @widget [i])))
-  ([widget path]
-     (println path (type widget))
-     (when (map? widget)
-       (doseq [[k v] widget]
-         (print-vars @v (conj path k))))))
+(defn print-components
+  ([] (print-components @root-component))
+  ([component] (print-components component []))
+  ([component path]
+     (println path component)
+     (doseq [[k v] component]
+       (println (conj path k) @v))
+     (doseq [[i child] (map-indexed vector (children component))]
+       (print-components @child (conj path i)))))
 
 (defn get-var
-  ([[k & path]]
-     (get-var (get @widgets k) path))
-  ([obj path]
-     (loop [obj obj
-            [k & path] path]
-       (if k
-         (recur (get @obj k) path)
-         obj))))
-
+  ([path] (get-var root-component path))
+  ([component [k & path]]
+     (if (nil? k)
+       component
+       (if (number? k)
+        (recur (nth (children @component) k) path)
+        (get @component k)))))
 
 (defn update-state [state]
   (-> state
-      (assoc :widgets @widgets)))
+      (assoc :root-component @root-component)))
 
 (defn init [state]
   (render-mode :wireframe)
   (app/periodic-update! 30  #'update-state )
   (app/vsync! true)
   (assoc state
-    :widgets @widgets
+    :root-component @root-component
     :focus nil))
 
 (defn reshape [[x y width height] state]
@@ -260,7 +292,7 @@
                 (push-matrix
                   (load-identity)
                   (TextureImpl/bindNone)
-                  (draw (:widgets state)))))
+                  (draw (:root-component state)))))
 
   )
 
@@ -285,7 +317,7 @@
 
 ;;  (println mx my)
   (try
-   (doseq [widget (children (:widgets state))
+   (doseq [widget (children (:root-component state))
            :let [[x y] (origin widget)]
            subwidget (children widget)]
      ;; (println "checking " subwidget x y (width subwidget) (height subwidget))
@@ -322,7 +354,15 @@
 
 (defn key-press [key state]
   "Called whenever a key is pressed. If the key is something that would normally show up in a text entry field, key is a case-sensitive string. Examples include “a”, “&”, and " ". If it is not, key is a keyword. Examples include :left, :control, and :escape"
-  state)
+   (when (string? key)
+     (dosync
+      (alter mys #(str % key))))
+   (when (= key :back)
+     (dosync
+      (alter mys #(subs % 0 (max 0 (dec (count %)))))))
+   
+   (-> state
+       (assoc :last-key-press [key (Date.)])))
 
 
 (defn key-release [key state]
@@ -332,15 +372,35 @@
 
 (defn key-type [key state]
   "Called whenever a key is pressed and released. This is the only key event which will expose auto-repeated keys."
-  (when (string? key)
-    (dosync
-     (alter mys #(str % key))))
-  (when (= key :back)
-    (dosync
-     (alter mys #(subs % 0 (max 0 (dec (count %)))))))
-
   state)
 
+
+
+(defn event-chan
+  ([app event-types] (event-chan app event-types (chan)))
+  ([app event-types ch]
+     (let [events #{:display
+                    :init
+                    :close
+                    :reshape
+                    :mouse-drag
+                    :mouse-move
+                    :mouse-down
+                    :mouse-up
+                    :mouse-click
+                    :key-press
+                    :key-release
+                    :key-type}
+           event-types (if (keyword? event-types)
+                             [event-types]
+                             event-types)]
+       
+       (doseq [event-type event-types]
+         (when-not (contains? events event-type)
+           (throw (Exception. (str "Subscribing to unknown event " event-type))))
+        (event/subscribe! app event-type
+                          (fn [& args] (put! ch args))))
+       ch)))
 
 (defonce current-app (atom nil))
 (defn start []
@@ -361,23 +421,16 @@
                          :mouse-click #'mouse-click
                          :key-press #'key-press
                          :key-release #'key-release
-                         :key-type #'key-type
-                         }
+                         :key-type #'key-type}
                         {:rot 0 :fluid true
                          :width 650
                          :height 878
                          :top 0
                          :jiggle-y 0
                          :jiggle-x 0}))
- 
-   (app/start-single-thread @current-app loop/basic-loop)))
-
-
-
-
-
-
-
+   
+   (app/start-single-thread @current-app loop/basic-loop))
+  )
 
 
 (defn -main
@@ -386,11 +439,6 @@
   ;; work around dangerous default behaviour in Clojure
   (alter-var-root #'*read-eval* (constantly false))
   (println "Hello, World!"))
-
-
-
-
-
 
 
 
