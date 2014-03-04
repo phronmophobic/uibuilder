@@ -282,37 +282,6 @@
        form))
    form))
 
-;; (defcomponent Transform [f args]
-;;   clojure.lang.IDeref
-;;   (deref [this]
-;;     (apply f (deref-all args))))
-
-;; (defn transform [f & args]
-;;   (Transform. f (ref args))
-;;   #_(Transform. (if (instance? clojure.lang.IDeref f)
-;;                 f
-;;                 (ref f))
-;;               (ref (map #(if (instance? clojure.lang.IDeref %)
-;;                            %
-;;                            (ref %))
-;;                         args))))
-
-
-;; (defcomponent ReduceTransform [f rval val clock]
-;;   clojure.lang.IDeref
-;;   (deref [this]
-;;     (let [[oldval oldclock oldrval] val]
-;;       (when (and (not= oldclock clock)
-;;                  (not= rval oldrval))
-;;         (dosync
-;;          (ref-set ~val [(f oldval rval) clock rval])))
-;;       (first val))))
-
-
-;; (defmethod print-method Transform [v ^java.io.Writer w]
-;;   (.write w "<Transform>"))
-;; (defmethod print-method ReduceTransform [v ^java.io.Writer w]
-;;   (.write w "<Reduce Transform>"))
 
 (defcomponent Path [points]
   IBounds
@@ -350,138 +319,11 @@
   (path [0 0] [0 height] [width height] [width 0] [0 0]))
 
 
-;; (defn rounded-rect [width height radius]
-;;   (draw-line-loop
-   
-;;    ))
-
-;; (def mys (ref "hi"))
-;; (def mouse-position (ref [0 0]))
-;; (def mouse-delta (ref [0 0]))
-;; (def root-component (ref (group [])))
-;; (def clock (ref 0))
-
-;; (def l1x (transform (comp (partial * 0.5) first) mouse-position))
-;; (def l1y (transform (comp (partial * 0.5) second) mouse-position))
-
-
-;; (dosync
-;;  (ref-set root-component (group [(widget (label mys)
-;;                                          l1x
-;;                                          l1y)
-;;                                  (widget (label (transform #(str "count: " (count %)) mys))
-;;                                          100 200)
-;;                                  (path [[100 100] [200 200]])
-;;                                  (widget (rectangle 100 200)
-;;                                          (transform (partial * 1.5) l1x)
-;;                                          (transform (partial * 1.5) l1y))
-;;                                  (widget (arc 300 0 (reducetransform
-;;                                                      (fn [old [dx dy]]
-;;                                                        (- old (* dx 0.05)))
-;;                                                      mouse-delta
-;;                                                      [0 0]
-;;                                                      clock))
-;;                                          300 500)
-;;                                  (label (transform
-;;                                          (fn [[dx dy]]
-;;                                            (str "num: " dx))
-;;                                          mouse-delta))
-;;                                  ])))
 (defn maybe-ref [val]
   (if (instance? clojure.lang.IDeref val)
     val
     (ref val)))
 
-
-;; (defn referize [form]
-;;   (if (list? form)
-;;     (cons 'transform form)
-;;     (if (symbol? form)
-;;      `(maybe-ref ~form)
-;;      `(ref ~form))))
-
-;; (defmacro rewrite [& body]
-;;   (let [newbody (clojure.walk/postwalk
-;;                  (fn [form]
-;;                    (if (and (seq? form)
-;;                             (= (first form) 'def))
-;;                      (let [init (last form)
-;;                            ]
-;;                        (-> form
-;;                            (->> (drop-last 1))
-;;                            (concat [(clojure.walk/postwalk referize init)
-;;                                     #_(if (seq? init)
-;;                                         (cons 'Transform. init)
-;;                                         `(ref ~init))])))
-;;                      form))
-;;                  body)]
-;;     `(do
-;;        ~@newbody)))
-
-;; (defmacro defui [name ui]
-;;   `(def ~name
-;;      ~(clojure.walk/postwalk
-;;        (fn [form]
-;;          (if (and (vector? form)
-;;                   (keyword? (first form)))
-;;            (list 'ref
-;;                  (cons (symbol (clojure.core/name(first form)))
-;;                        (rest form)
-;;                        #_(map referize (rest form))))
-;;            (if (not (keyword? form))
-;;              (referize form)
-;;              form))
-;;          )
-;;        ui)))
-
-;; (rewrite
-;;    (def mys "hi")
-;;    (def mouse-position [0 0])
-;;    (def mouse-delta [0 0])
-;;    (def clock  0)
-;;    (def arc-radius (* Math/PI 1.5))
-
-;;    (def mx (first mouse-position))
-;;    (def my (second mouse-position)))
-
-;; (rewrite
-;;     (defui ui [:group
-;;               [:move mx my
-;;                [:label mys]]
-;;               [:move 100 200
-;;                [:label (str "count: " (count mys))]]
-;;               [:path [100 100] [200 200]]
-;;               [:move (* 1.5 mx) (* 1.5 mx)
-;;                [:rectangle 100 200]]
-;;               ;; [:move 300 500
-;;               ;;  [:arc 300 0 arc-radius]]
-;;               [:label 
-;;                (str "num: " (first mouse-delta))]]))
-
-
-
-
-
-;; (defn print-components
-;;   ([] (print-components @ui))
-;;   ([component] (print-components component []))
-;;   ([component path]
-;;      (println path component)
-;;      (doseq [[k v] component]
-;;        (println (conj path k) @v))
-;;      (doseq [[i child] (map-indexed vector (children component))]
-;;        (print-components @child (conj path i)))))
-
-
-
-;; (defn get-var
-;;   ([path] (get-var ui path))
-;;   ([component [k & path]]
-;;      (if (nil? k)
-;;        component
-;;        (if (number? k)
-;;         (recur (nth (children @component) k) path)
-;;         (get @component k)))))
 
 (declare system)
 (defn update-state [state]
@@ -500,8 +342,6 @@
   (translate 0 0 -4)
   (light 0 :position [1 1 1 0])
   state)
-
-
 
 
 
