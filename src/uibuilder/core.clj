@@ -1,5 +1,5 @@
 (ns uibuilder.core
-  (:use [penumbra.opengl]
+  (:use [penumbra.opengl :exclude [color]]
         [penumbra.utils :only [defn-memo]])
   (:require [penumbra.app :as app]
             [penumbra.app.event :as event]
@@ -86,31 +86,6 @@
                ~field
                (ref ~field))) ))))
 
-(defn quad []
-  (push-matrix
-   (translate -0.5 -0.5 0.5)
-   (normal 0 0 1)
-
-   (color (rand) (rand) (rand))
-   (vertex 0 0)
-   (color (rand) (rand) (rand))
-   (vertex 1 0)
-   (color (rand) (rand) (rand))
-   (vertex 1 1)
-   (color (rand) (rand) (rand))
-   (vertex 0 1)))
-
-(defn cube []
-  (push-matrix
-   (draw-quads
-    (dotimes [_ 4]
-      (rotate 90 0 1 0)
-      (quad))
-    (rotate 90 1 0 0)
-    (quad)
-    (rotate 180 1 0 0)
-    (quad))))
-
 (defprotocol IDraw
   (draw [this]))
 
@@ -182,30 +157,38 @@
       (swap! *font-cache* assoc (list* name modifiers) font)
       font)))
 
-(defcomponent Label [text]
+(defcomponent Label [text options]
   IBounds
   (-bounds [_]
-    (let [f (or *font* (font "Tahoma" :size 20))]
+    (let [f (or *font* (font (get options :font "Tahoma")
+                             :size (get options :font-size 20)))]
       [(.getWidth f text)
        (.getHeight f text)]))
 
   IDraw
   (draw [this]
-    (with-font (or *font* (font "Tahoma" :size 20))
+    (with-font (or *font* (font (get options :font "Tahoma")
+                                :size (get options :font-size 20)))
       (try-with-program
        nil
        (with-disabled [:texture-rectangle :lighting]
          (with-enabled [:texture-2d :blend]
            (let [blend-dst (get-integer :blend-dst)
                  blend-src (get-integer :blend-src)]
-             (blend-func :src-alpha :one-minus-src-alpha)
-             (TextureImpl/bindNone)
-             (.drawString *font* 0 0 text)
-             (blend-func blend-src blend-dst)))))))
+             (push-matrix
+              (when (or (get options :x)
+                        (get options :y))
+                (translate (get options :x 0) (get options :y 0) 0))
+              (when-let [color (get options :color)]
+                  (apply penumbra.opengl/color color))
+              (blend-func :src-alpha :one-minus-src-alpha)
+              (TextureImpl/bindNone)
+              (.drawString *font* 0 0 text)
+              (blend-func blend-src blend-dst))))))))
   )
 
-(defn label [text]
-  (Label. text))
+(defn label [text & options]
+  (Label. text (apply hash-map options)))
 
 (defcomponent Group [drawables]
   IDraw
@@ -238,6 +221,24 @@
      (draw drawable))))
 (defn move [x y drawable]
   (Move. x y drawable))
+
+;; (defcomponent Color [color drawable]
+;;   IOrigin
+;;   (-origin [this]
+;;     (origin drawable))
+;;   IChildren
+;;   (-children [this]
+;;     [~drawable])
+;;   IBounds
+;;   (-bounds [this]
+;;     (bounds drawable))
+;;   IDraw
+;;   (draw [this]
+;;     (push-matrix
+;;      (apply penumbra.opengl/color color)
+;;      (draw drawable))))
+;; (defn color [color drawable]
+;;   (Color. color drawable))
 
 (defn myempty [o]
   (if (instance? clojure.lang.IRecord o)
@@ -291,13 +292,30 @@
       [maxx maxy]))
   IDraw
   (draw [this]
-    (draw-lines
-     (doseq [[[x1 y1] [x2 y2]] (map vector points (rest points))]
-       (vertex x1 y1)
-       (vertex x2 y2)))))
+    (push-matrix
+     (draw-lines
+      (doseq [[[x1 y1] [x2 y2]] (map vector points (rest points))]
+        (vertex x1 y1)
+        (vertex x2 y2))))))
 (defn path [& points]
   (Path. points))
 
+(defcomponent Polygon [color points]
+  IBounds
+  (-bounds [this]
+    (let [maxx (apply max (map first points))
+          maxy (apply max (map second points))]
+      [maxx maxy]))
+  IDraw
+  (draw [this]
+    (push-matrix
+     (draw-polygon
+      (doseq [[x y] points]
+        (when color
+          (apply penumbra.opengl/color color))
+        (vertex x y))))))
+(defn polygon [color & points]
+  (Polygon. color points))
 
 (defcomponent Arc [radius rad-start rad-end steps]
   IDraw
@@ -318,6 +336,10 @@
 (defn rectangle [width height]
   (path [0 0] [0 height] [width height] [width 0] [0 0]))
 
+(defn filled-rectangle [color width height]
+  (polygon color [0 0] [0 height]  [width height] [width 0]  [0 0]))
+
+
 
 (defn maybe-ref [val]
   (if (instance? clojure.lang.IDeref val)
@@ -327,7 +349,7 @@
 
 (declare system)
 (defn update-state [state]
-  (swap! system add-value 't  (.getTime (Date.)))
+  (swap! system add-value '?t  (.getTime (Date.)))
   state)
 
 (defn init [state]
@@ -426,8 +448,238 @@
                     ~@body)
                 ~'system)))))
 
+#_(defn make-button [system bname]
+  (letfn [(property-name [pname]
+            (symbol (str (name bname) "." (name pname))))]
+    (-> system
+        (add-value (property-name 'x) 0)
+        (add-value (property-name 'y) 0)
+        (add-value (property-name 'width) 100)
+        (add-value (property-name 'height) 50)
+        (add-value (property-name 'text) "button!")
+        (add-propagator (map property-name ['text])
+                        (fn [system]
+                          (let [lwidth (* 10 (.length (get-value system (property-name 'text))))]
+                            (if (> (+ 20 lwidth) 100)
+                              (add-value system (property-name 'width)
+                                         (+ 20 lwidth))
+                              (add-value system (property-name 'width)
+                                         100)))))
+        (add-value (property-name 'color) [0.3 1.0 0.3])
+        (add-propagator ['mouse-x 'mouse-y]
+                        (fn [system]
+                          (if (box-contains? [(get-value system (property-name 'x))
+                                              (get-value system (property-name 'y))
+                                              (get-value system (property-name 'width))
+                                              (get-value system (property-name 'height))]
+                                             [(get-value system 'mouse-x)
+                                              (get-value system 'mouse-y)])
+                            (add-value system (property-name 'color) [0.4 0.4 0.4])
+                            (add-value system (property-name 'color) [0.3 0.3 0.3]))))
+        (add-propagator (map property-name ['x 'y 'width 'height 'text 'color])
+                        (fn [system]
+                          (let [lwidth (* 10 (.length (get-value system (property-name 'text))))
+                                lheight 20]
+                           (-> system
+                               (add-value (property-name 'drawable)
+                                          (move (get-value system (property-name 'x))
+                                                (get-value system (property-name 'y))
+                                                (group
+                                                 (filled-rectangle (get-value system (property-name 'color))
+                                                                   (get-value system (property-name 'width))
+                                                                   (get-value system (property-name 'height)))
+                                                 (label (get-value system (property-name 'text))
+                                                        :x (/ (- (get-value system (property-name 'width)) lwidth) 2)
+                                                        :y (/ (- (get-value system (property-name 'height)) lheight) 2))))))))))))
+
+
+(defn apply-simple-rule [system rule]
+  (let [[cellname constant deps expr]
+        (case (count rule)
+          (2 4)
+          rule
+          3
+          (let [[cellname constant expr] rule
+                deps (->> expr
+                          (tree-seq seqable? seq)
+                          (filter #(and (symbol? %)
+                                        (.startsWith (name %) "?")))
+                          (distinct)
+                          (remove (partial = cellname)))]
+           [cellname constant deps expr])
+
+          (throw (Exception. "Invalid number of arguments for rule")))
+        system-cells (->> expr
+                          (tree-seq seqable? seq)
+                          (filter #(and (symbol? %)
+                                        (.startsWith (name %) "?")))
+                          (distinct))
+        system (add-value system cellname (eval constant))
+        system (if (nil? expr)
+                 system
+                 (let [symbolfy (fn [sym]
+                                  (-> sym
+                                      str
+                                      rest
+                                      (->> (apply str))
+                                      symbol))
+                       system-sym (gensym "system")
+                       expr (clojure.walk/postwalk-replace
+                             (into {}
+                                   (for [cell system-cells]
+                                     [cell `(get-value ~system-sym '~cell)]))
+                             expr)
+                       propagtor-raw `(fn [~system-sym]
+                                        (if (some (partial = :propaganda.values/nothing)
+                                                  (map (partial get-value ~system-sym)
+                                                       [~@(map (partial list 'quote) system-cells)]))
+                                          ~system-sym
+                                          (add-value ~system-sym '~cellname
+                                                     ~expr)))
+                       ;; _ (clojure.pprint/pprint propagtor-raw)
+                       propagator-fn (eval
+                                      propagtor-raw)]
+                   (add-propagator system
+                                   deps
+                                   propagator-fn)))]
+    system))
+
+
+
+
+(defn add-rule [system rule]
+  (let [[rule-name & rest] rule]
+    (assoc-in system [:rules rule-name] rest)))
+
+
+(defn expand-rule-fn [system rule]
+  (let [[[rule-name & args]] rule
+        [args* & subrules*] (get-in system [:rules rule-name])
+        syms-map (into {} (map vector  args* args))
+        subrules (clojure.walk/postwalk
+                  (fn [form]
+                    (if-let [sym (->> (map first syms-map)
+                                      (filter #(and (symbol? form)
+                                                    (.startsWith (name form) (str % "."))))
+                                      first)]
+                      (symbol (str (get syms-map sym) "." (subs (name form) (inc (.indexOf (name form) ".")))))
+                      form))
+                  subrules*)
+        subrules (clojure.walk/postwalk-replace
+                  syms-map
+                  subrules)]
+    subrules))
+
+
+
+
+
+
+(defn apply-rule [system rule]
+  ;; (println "addring rule " rule)
+  (if (list? (first rule))
+    (reduce apply-rule system (expand-rule-fn system rule))
+    (apply-simple-rule system rule)))
+
+
+(def test-system (psystem/make-system
+                  (fn [a b]
+                    (if (= :propaganda.values/nothing b)
+                      a
+                      b))
+                  (pvalues/default-contradictory?)))
 
 (do
+
+
+
+  (def rules
+    '[[?mouse-x 0]
+      [?mouse-y 0]
+      [?mouse-down false]
+      [?t 1]
+      [?t1 1 (int (/ ?t 1000))]
+      [?oldts '()
+       [?t]
+       (take 2 (cons ?t ?oldts))]
+      [?lastt 0
+       (second ?oldts)]
+      [?dt 1
+       (if (and ?lastt ?t)
+         (- ?t ?lastt)
+         1)]
+      [?thalf 0 (long (/ ?t 300))]
+      [?letters []
+       (cond
+        (= :back ?keypress)
+        (vec (butlast ?letters))
+
+        (string? ?keypress)
+        (conj ?letters ?keypress)
+
+        :else
+        ?letters)]
+      [(make-button ?mybutton)]
+      [?acceleration 0.010]
+      [?keypress ""]
+      [?dx 0
+       [?t]
+       (cond
+
+        ?mouse-down
+        (+ ?dx (* ?acceleration (- ?mouse-x ?mybutton.x)))
+        
+        (#{100 500} ?mybutton.x)
+        0
+        :else ?dx)]
+      [?mybutton.x 150
+       [?t]
+       (let [newx (+ ?mybutton.x ?dx)]
+        (cond 
+         (< newx 100)
+         100
+         (> newx 500)
+         500
+         :else newx))]
+      [?draw []]
+      [?components nil
+       (group
+        (move 50 150
+              (label (str "dx: " ?dx )))
+        (move 50 170
+              (label (str "dt: " ?dt )))
+        (move 50 200
+              (label (str "mouse-x: " ?mouse-x )))
+        (move 50 250
+              (label (str "mouse-down: " ?mouse-down )))
+
+        (move 50 270
+              (label (str "mybutton.x: " ?mybutton.x )))
+        (move 50 290
+              (label (str "keypress: " ?keypress )))
+        (move 50 310
+              (label (str "letters: " (apply str ?letters) )))
+        (apply group ?draw)
+        ?mybutton.drawable)]])
+
+  (def rulefns
+    '[[make-button [?b]
+       [?b.x 0]
+       [?b.y 0]
+       [?b.width 100]
+       [?b.height 100]
+       [?b.drawable nil
+        (group
+         (move ?b.x ?b.y
+               (filled-rectangle [0.3 0.3 0.3]
+                            ?b.width ?b.height)))]]
+      [center-x [?a ?b]
+       [?a.x (+ ?b.x
+                (/ (- ?b.width ?a.width)
+                   2.0))]
+       [?b.x (+ ?a.x
+                (/ (- ?a.width ?b.width)
+                   2.0))]]])
 
   (def system (atom (psystem/make-system
                      (fn [a b]
@@ -435,150 +687,16 @@
                          a
                          b))
                      (pvalues/default-contradictory?))))
-
-
- (swap! system add-value 'v1 "hi ")
- (swap! system add-value 'v2 "bob: ")
- (swap! system add-value 'x 10)
- (swap! system add-value 'y 10)
-
-
- (swap! system add-value 'mouse-x 0)
- (swap! system add-value 'mouse-y 0)
-
-
- (p= ?text
-     (str "hi " ?x ", " ?y))
- (swap! system add-value 'x2 0)
- (swap! system add-value 'y2 0)
- (pwhen ?t
-   (add-value 'x2
-              (+ ?x2
-                 (* (- ?mouse-x ?x2)
-                    0.3))))
- (pwhen ?t
-   (add-value 'y2
-              (+ ?y2
-                 (* (- ?mouse-y ?y2)
-                    0.3))))
- (swap! system add-value 'width 500)
- (swap! system add-value 'height 500)
- (swap! system add-value 'random-text "rando")
- (swap! system add-value 't 1)
- (p= ?thalf (long (/ ?t 300)))
- (swap! system add-value 'mynum 100)
- (p= ?mynum
-     (do ?thalf
-         (dec ?mynum)))
- (swap! system add-value 'mynums [])
- (p= ?mynums
-     (conj ?mynums ?thalf))
- (p= ?t1 (int (/ ?t 1000)))
- (swap! system add-value 'letters [])
- (swap! system add-value 'keypress "a")
- (swap! system add-value 'mouse-down false)
- (swap! system add-value 'rx 0)
- (swap! system add-value 'ry 0)
- (pwhen ?mouse-down
-     (add-value 'rx ?mouse-x)
-     (add-value 'ry ?mouse-y))
- (p= ?rwidth (- ?mouse-x ?rx))
- (p= ?rheight (- ?mouse-y ?ry))
-
- (p= ?letters
-     (cond
-      (= :back ?keypress)
-      (vec (butlast ?letters))
-
-      (string? ?keypress)
-      (conj ?letters ?keypress)
-
-      :else
-      ?letters))
- (swap! system add-value 'awayx 250)
- (swap! system add-value 'awayy 240)
- (swap! system add-value 'awaytext ":)")
- (p= ?pclose
-     (< (+ (Math/abs (- ?mouse-x ?awayx))
-                 (Math/abs (- ?mouse-y ?awayy)))
-        120))
- (p= ?awaytext
-     (if ?pclose
-       (str (-  ?awayx ?mouse-x))
-       ":)"))
- (p= ?awayx
-     (if ?pclose
-       ?awayx
-       #_(+ ?awayx
-          (* 10
-             (/ (-  ?awayx ?mouse-x)
-                120)))
-       ?awayx))
- (p= ?awaything
-     (move ?awayx ?awayy
-           (label ?awaytext)))
-
- (swap! system add-value 'arcx 200)
- (swap! system add-value 'arcy 50)
- (p= ?arcx
-     (+ ?mouse-x
-        (* 20 (Math/sin (/ ?t 300)))))
- (p= ?arcy
-     (+ ?mouse-y
-        (* 20 (Math/cos (/ ?t 300)))))
- (p= ?components
-     (group
-      (move ?x ?y
-            (label ?text))
-      (move ?x ?y
-            (rectangle ?width ?height))
-      (move 200 200
-            (label (str ?mynum " bottles on the wall")))
-      (move 200 100
-            (label (str "letters: " (apply str ?letters))))
-      (move 200 50
-            (label (str "keypress: " ?keypress)))
-      (move 300 300
-            (label ?random-text))
-      (move ?arcx ?arcy
-            (arc 30 0 (* 2 Math/PI (Math/cos (/ ?t 300)))))
-      ?awaything
-      (move 100 200
-            (apply
-             group
-             (for [[i num] (map-indexed vector (take-last 10 ?mynums))]
-               (move 0 (* i 30) (label (str num))))))
-      (when (every? #(not= % :propaganda.values/nothing)
-                    [?rx ?ry ?rheight ?rwidth])
-        (move ?rx ?ry
-              (rectangle ?rwidth ?rheight)))
-      (move ?x2
-            ?y2
-            (label (str "moving " (int ?x2) ", " (int ?y2))))))
- 
- (p= ?width
-     (* 0.5 (-  ?x2 ?x)))
- (p= ?height
-     (max 100 (* 0.5 ?width)))
- 
- 
- (p= ?t30 (long (/ ?t 30)))
-
- (p= ?random-text
-     (do
-       ?t1
-       (str (mod ?t1 1000) " " (random-string))))
- (swap! system same 'x 'mouse-x)
- (swap! system same 'y 'mouse-y)
-
-
- )
+  (swap! system #(reduce add-rule % rulefns))
+  (swap! system #(reduce apply-rule % rules))
+  
+)
 
 (defn display [[dt t] state]
   (render-mode :solid)
 
   (let [[x-origin y-origin w h] @penumbra.opengl.core/*view*]
-    (let [root (get-value @system 'components)]
+    (let [root (get-value @system '?components)]
       (when-not (= root :propaganda.values/nothing)
         (with-projection (ortho-view x-origin (+ x-origin w) (+ y-origin h) y-origin -1 1)
           (push-matrix
@@ -588,6 +706,10 @@
 
   )
 
+(defmacro ! [rule]
+  `(swap! ~'system apply-rule '~rule))
+
+
 
 
 (defn close [state]
@@ -595,6 +717,8 @@
 
 (defn mouse-drag [[dx dy] [x y] button state]
   "Called when mouse moves with a button pressed. [dx dy] contains relative motion since last time :mouse-drag was called, and [x y] contains absolute position of the mouse. button will be equal to one of :left, :right, :center, :mouse-4, or :mouse-5. If the mouse is moving when two or more buttons are pressed, :mouse-drag will be called once for each button."
+  (swap! system add-value '?mouse-x x)
+  (swap! system add-value '?mouse-y y)
   state)
 
 (defn box-contains? [[x y width height] [px py]]
@@ -606,25 +730,26 @@
 
 (defn mouse-move [[dx dy] [mx my] state]
   "Called the same as :mouse-drag, but when no button is pressed."
-
+  (swap! system add-value ^:mouse '?mouse-x mx)
+  (swap! system add-value '?mouse-y my)
   state)
 
 
 
 (defn mouse-down [[x y] button state]
   "Called whenever a button is pressed."
-  (swap! system add-value 'mouse-x x)
-  (swap! system add-value 'mouse-y y)
-  (swap! system add-value 'mouse-down true)
+  (swap! system add-value '?mouse-x x)
+  (swap! system add-value '?mouse-y y)
+  (swap! system add-value '?mouse-down true)
   (-> state
       (assoc :move-hello? (not (:move-hello? state)))))
 
 
 (defn mouse-up [[x y] button state]
   "Called whenever a button is released."
-  (swap! system add-value 'mouse-x x)
-  (swap! system add-value 'mouse-y y)
-  (swap! system add-value 'mouse-down false)
+  (swap! system add-value '?mouse-x x)
+  (swap! system add-value '?mouse-y y)
+  (swap! system add-value '?mouse-down false)
   (-> state
       (assoc :mousedown false)))
 
@@ -638,8 +763,8 @@
   "Called whenever a key is pressed. If the key is something that would normally show up in a text entry field, key is a case-sensitive string. Examples include “a”, “&”, and " ". If it is not, key is a keyword. Examples include :left, :control, and :escape"
 
   
-  (swap! system add-value 'keypress nil)
-  (swap! system add-value 'keypress key)
+  (swap! system add-value '?keypress nil)
+  (swap! system add-value '?keypress key)
 
   state)
 
@@ -714,8 +839,8 @@
     (let [md (event-chan @current-app :mouse-drag (chan (async/dropping-buffer 0)))]
       (loop []
         (when-let [[[dx dy :as mdelta] [mx my :as mp]] (<! md)]
-          (swap! system add-value 'mouse-x mx)
-          (swap! system add-value 'mouse-y my)
+          (swap! system add-value '?mouse-x mx)
+          (swap! system add-value '?mouse-y my)
           ;; (dosync
           ;;  (ref-set mouse-position mp)
           ;;  (ref-set mouse-delta mdelta))
@@ -735,14 +860,8 @@
   )
 
 
-;; (defcomponent toolbar [things]
-;;   :things things
-;;   :rules
-;;   [(evenly-spaced (children this))])
 
-;; (defcomponent textarea
-;;   :things []
-;;   :?)
+
 
 ;; (defcomponent rich-text-editor
 ;;   :things
