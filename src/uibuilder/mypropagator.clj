@@ -158,7 +158,8 @@
   (get-cell [sheet cname])
   (get-triggers [sheet cname])
   (get-triggees [sheet cname])
-  (set-cell-fn [sheet cname f trigs dps]))
+  (set-cell-fn [sheet cname f trigs dps])
+  ;; need a remove cell
 
 
 (defn set-cell-expr
@@ -176,7 +177,14 @@
 ;; write functions that call set-cell, update-cell, update-cell-deps, etc.
 
 
-
+(def messenger (agent nil))
+(def out *out*)
+(defn msg [msg]
+  (send messenger (fn [_ msg]
+                    (binding [*out* out]
+                      (println msg)
+                      msg))
+        msg))
 
 (defrecord Sheet [fns vals triggers deps]
 
@@ -213,7 +221,7 @@
         (do
           (if (visited cname)
             (do
-              (println "warning! already processed " cname "... skipping...")
+              (msg "warning! already processed " cname "... skipping...")
               (recur sheet (pop queue) visited))
             (let [sheet (update-cell sheet cname)
                   visited (conj visited cname)

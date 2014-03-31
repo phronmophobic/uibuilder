@@ -475,6 +475,10 @@
   (def system (atom (mypropagator/make-sheet)))
   (def sheet system)  
   (defn put-cell-init
+    ([sheet cname init]
+       (-> sheet
+           (set-cell cname init)
+           (update-cell-deps cname)))
     ([sheet cname init expr]
        (put-cell-init sheet cname init expr (cell-deps cname expr)))
     ([sheet cname init expr triggers]
@@ -510,6 +514,10 @@
 
 
   (defmacro !!
+    ([cname init]
+       `(do
+          (swap! ~'sheet put-cell-init (quote ~cname) ~init)
+          (? ~cname)))
     ([cname init expr]
        `(do
           (swap! ~'sheet put-cell-init (quote ~cname) ~init (quote ~expr))
@@ -848,25 +856,47 @@
 
 
 (! components (group
-               (move x y (label "hi"))))
+               stage
+               paddle
+               ball))
 
-;; (mypropagator/get-triggees @sheet 't)
-;; (mypropagator/set-cell @sheet 't 10)
-;; (mypropagator/get-triggers @sheet 'components)
+(!! py 10
+    (case keypress
+      :down
+      (+ py 2)
+      :up
+      (- py 2)
+      py)
+    )
+(!! px 20)
+(!! pheight 100)
 
-(!! x 0 (+ x dx))
+(! paddle
+   (move px py
+         (rectangle 10 pheight )))
 
-(!! dx
-    0
-    (if mouse-down
-      (+ dx (* (- mouse-x x) 0.01))
-      0)
-    [t])
+(mypropagator/get-triggees @sheet 'pheight)
+(! stage
+   (rectangle width height))
+
+(! width 500)
+(! height 500)
+
+(!! bx 10
+    (min width (max 0 (+ bx bdx))) [t])
+(!! bdx 30
+    (if (#{0 width} bx)
+      (- bdx)
+      bdx))
+
+(!! by 50
+    (min height (max 0 (+ by bdy))) [t])
+
+(!! bdy 30
+    (if (#{0 height} by)
+      (- bdy)
+      bdy))
 
 
-(!! y 10 (+ y dy))
-(!! dy 0 (if mouse-down
-           (+ dy (* (- mouse-y y) 0.01))
-           0) [t])
 
-
+(! ball (move bx by (arc 10 0 (* 2 Math/PI))))
