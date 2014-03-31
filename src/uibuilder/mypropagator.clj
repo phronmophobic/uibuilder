@@ -185,65 +185,61 @@
 
     (let [f (get fns cname)
           cins (get deps cname)
-          _ (println "udpate-cell" cname cins (every? (partial contains? vals)
-                            cins))
           sheet (if (every? (partial contains? vals)
                             cins)
                   (let [oldval (get vals cname)
                         fvals (map vals cins)
                         newval (binding [*sheet* sheet]
                                  (f (cons oldval fvals)))]
-                    (println "new val" cname newval)
                     (assoc-in sheet [:vals cname] newval))
                   sheet)]
       sheet))
 
   (update-cell-deps [sheet cname]
-    (println "update-cell-deps")
     ;; need to guarentee we process dependencies based on the distance from the observed cell
     ;; also, let's print out if we encounter the same node twice
+    ;; still have a problem where you have two paths
+    ;; eg. a -> b -> c
+    ;;     x -> y -> z -> c
+    ;; it's ok if we visit it twice as long as we pass in the old value of c
+    ;; but if there is a cycle then we're screwed
     (loop [sheet sheet
            queue (into (priority-map)
                        (for [trig (get-triggees sheet cname)]
-                         [1 trig]))
+                         [trig 1]))
            visited #{cname}]
-      (println "updateing " queue)
-      (if-let [[dist cname] (first queue)]
+
+      (if-let [[cname dist] (first queue)]
         (do
-          (print "current update " cname (get-triggees sheet cname))
           (if (visited cname)
             (do
               (println "warning! already processed " cname "... skipping...")
               (recur sheet (pop queue) visited))
             (let [sheet (update-cell sheet cname)
                   visited (conj visited cname)
+                  new-dist (inc dist)
                   queue (into (pop queue)
                               (for [trig (get-triggees sheet cname)]
-                                [(inc dist) trig]))]
+                                [trig new-dist]))]
               (recur sheet queue visited))))
         sheet)))
 
   (set-cell [sheet cname val]
-    (println "set-cell")
     (assoc-in sheet [:vals cname] val))
 
   (get-cell [sheet cname]
-    (println "get-cell")
     (get vals cname))
 
   (get-triggers [sheet cname]
-    (println "get-triggers" cname)
     (get triggers cname))
 
   (get-triggees [sheet cname]
     (for [[trigee triggers] triggers
-;;          :let [_ (println trigee triggers (contains? triggers cname))]
           :when (contains? triggers cname)
           ]
     trigee))
 
   (set-cell-fn [sheet cname f trigs dps]
-    (println "set-cell-fn" trigs dps)
     (-> sheet
         (assoc-in [:fns cname] f)
         (assoc-in [:triggers cname] (apply sorted-set trigs))
@@ -252,64 +248,5 @@
 
 (defn make-sheet []
   (Sheet. {} (ns-publics 'clojure.core) {} {}))
-
-
-
-(def sheet (atom (make-sheet)))
-
-(defn put-cell-init
-  ([sheet cname init expr]
-     (println "put-cell-init" cname init expr)
-     (put-cell-init sheet cname init expr (cell-deps cname expr)))
-  ([sheet cname init expr triggers]
-     (println triggers)
-     (-> sheet
-         (set-cell-expr cname expr triggers)
-         (set-cell cname init)
-         (update-cell-deps cname))))
-
-(defn put-cell
-  ([sheet cname expr]
-     (put-cell sheet cname expr (cell-deps cname expr)))
-  ([sheet cname expr triggers]
-     (-> sheet
-         (set-cell-expr cname expr triggers)
-         (update-cell cname)
-         (update-cell-deps cname))))
-
-(defmacro ? [cname]
-  `(get-cell @~'sheet (quote ~cname)))
-
-(defmacro !
-  ([cname expr]
-     `(do
-        (swap! ~'sheet put-cell (quote ~cname) (quote ~expr))
-        (? ~cname)))
-  ([cname expr triggers]
-     `(do
-        (swap! ~'sheet put-cell (quote ~cname) (quote ~expr) ~(for [trig triggers]
-                                                                `(quot ~trig)))
-        (? ~cname))))
-
-
-(defmacro !!
-  ([cname init expr]
-     `(do
-        (swap! ~'sheet put-cell-init (quote ~cname) ~init (quote ~expr))
-        (? ~cname)))
-  ([cname init expr triggers]
-     `(do
-        (swap! ~'sheet put-cell-init (quote ~cname) ~init
-               (quote ~expr)
-               ~(vec
-                 (for [trig triggers]
-                   `(quote ~trig))))
-        (? ~cname))))
-
-(clojure.pprint/pprint
- (for [[k v] (:vals @sheet)
-       :when (not (var? v))]
-   [k v]))
-
 
 

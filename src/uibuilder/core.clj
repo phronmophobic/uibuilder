@@ -21,7 +21,7 @@
                                                   put!
                                                   take!]]
             [propaganda.system :as psystem :refer [add-value get-value add-propagator]]
-            [uibuilder.mypropagator :as mypropagator :refer [update-cell get-cell]]
+            [uibuilder.mypropagator :as mypropagator :refer [get-cell set-cell-expr update-cell update-cell-deps cell-deps set-cell]]
             [propaganda.values :as pvalues]
 )
   (:import [java.awt Font]
@@ -332,7 +332,7 @@
 
 (declare system)
 (defn update-state [state]
-  (swap! system update-cell 't  (.getTime (Date.)))
+  (swap! system put-cell 't  (.getTime (Date.)))
   state)
 
 (defn init [state]
@@ -350,19 +350,19 @@
 
 
 
-(defn same [system & cells]
-  (reduce
-   (fn [system [a b]]
-     (add-propagator
-      system
-      [a]
-      (fn [system]
-        (update-cell system
-                   b
-                   (get-value system a)))))
-   system
-   (conj (map vector cells (rest cells))
-         [(last cells) (first cells)])))
+;; (defn same [system & cells]
+;;   (reduce
+;;    (fn [system [a b]]
+;;      (add-propagator
+;;       system
+;;       [a]
+;;       (fn [system]
+;;         (update-cell system
+;;                    b
+;;                    (get-value system a)))))
+;;    system
+;;    (conj (map vector cells (rest cells))
+;;          [(last cells) (first cells)])))
 
 
 
@@ -473,14 +473,59 @@
       ])
 
   (def system (atom (mypropagator/make-sheet)))
-  (def sheet system)
-  (defmacro ? [cname]
-    `(get-in @sheet [:vals (quote ~cname)]))
+  (def sheet system)  
+  (defn put-cell-init
+    ([sheet cname init expr]
+       (put-cell-init sheet cname init expr (cell-deps cname expr)))
+    ([sheet cname init expr triggers]
+       (-> sheet
+           (set-cell-expr cname expr triggers)
+           (set-cell cname init)
+           (update-cell-deps cname))))
 
-  (defmacro ! [cname expr]
-    `(do
-       (swap! sheet update-cell (quote ~cname) (quote ~expr))
-       (? ~cname)))
+  (defn put-cell
+    ([sheet cname expr]
+       (put-cell sheet cname expr (cell-deps cname expr)))
+    ([sheet cname expr triggers]
+       (-> sheet
+           (set-cell-expr cname expr triggers)
+           (update-cell cname)
+           (update-cell-deps cname))))
+
+  (defmacro ? [cname]
+    `(get-cell @~'sheet (quote ~cname)))
+
+  (defmacro !
+    ([cname expr]
+       `(do
+          (swap! ~'sheet put-cell (quote ~cname) (quote ~expr))
+          (? ~cname)))
+    ([cname expr triggers]
+       `(do
+          (swap! ~'sheet put-cell (quote ~cname) (quote ~expr)
+                 ~(vec
+                   (for [trig triggers]
+                     `(quote ~trig))))
+          (? ~cname))))
+
+
+  (defmacro !!
+    ([cname init expr]
+       `(do
+          (swap! ~'sheet put-cell-init (quote ~cname) ~init (quote ~expr))
+          (? ~cname)))
+    ([cname init expr triggers]
+       `(do
+          (swap! ~'sheet put-cell-init (quote ~cname) ~init
+                 (quote ~expr)
+                 ~(vec
+                   (for [trig triggers]
+                     `(quote ~trig))))
+          (? ~cname))))
+
+
+
+
 
   (swap! system
          (fn [system]
@@ -491,7 +536,7 @@
   (swap! system
          #(reduce
            (fn [system [cname expr]]
-             (mypropagator/update-cell system cname expr))
+             (mypropagator/put-cell system cname expr))
            %
            (partition 2 rules)))
 
@@ -615,8 +660,8 @@
 
 (defn mouse-drag [[dx dy] [x y] button state]
   "Called when mouse moves with a button pressed. [dx dy] contains relative motion since last time :mouse-drag was called, and [x y] contains absolute position of the mouse. button will be equal to one of :left, :right, :center, :mouse-4, or :mouse-5. If the mouse is moving when two or more buttons are pressed, :mouse-drag will be called once for each button."
-  (swap! system update-cell 'mouse-x x)
-  (swap! system update-cell 'mouse-y y)
+  (swap! system put-cell 'mouse-x x)
+  (swap! system put-cell 'mouse-y y)
   state)
 
 (defn box-contains? [[x y width height] [px py]]
@@ -628,26 +673,26 @@
 
 (defn mouse-move [[dx dy] [mx my] state]
   "Called the same as :mouse-drag, but when no button is pressed."
-  (swap! system update-cell 'mouse-x mx)
-  (swap! system update-cell 'mouse-y my)
+  (swap! system put-cell 'mouse-x mx)
+  (swap! system put-cell 'mouse-y my)
   state)
 
 
 
 (defn mouse-down [[x y] button state]
   "Called whenever a button is pressed."
-  (swap! system update-cell 'mouse-x x)
-  (swap! system update-cell 'mouse-y y)
-  (swap! system update-cell 'mouse-down true)
+  (swap! system put-cell 'mouse-x x)
+  (swap! system put-cell 'mouse-y y)
+  (swap! system put-cell 'mouse-down true)
   (-> state
       (assoc :move-hello? (not (:move-hello? state)))))
 
 
 (defn mouse-up [[x y] button state]
   "Called whenever a button is released."
-  (swap! system update-cell 'mouse-x x)
-  (swap! system update-cell 'mouse-y y)
-  (swap! system update-cell 'mouse-down false)
+  (swap! system put-cell 'mouse-x x)
+  (swap! system put-cell 'mouse-y y)
+  (swap! system put-cell 'mouse-down false)
   (-> state
       (assoc :mousedown false)))
 
@@ -661,8 +706,8 @@
   "Called whenever a key is pressed. If the key is something that would normally show up in a text entry field, key is a case-sensitive string. Examples include “a”, “&”, and " ". If it is not, key is a keyword. Examples include :left, :control, and :escape"
 
   
-  (swap! system update-cell 'keypress nil)
-  (swap! system update-cell 'keypress key)
+  (swap! system put-cell 'keypress nil)
+  (swap! system put-cell 'keypress key)
 
   state)
 
@@ -737,8 +782,8 @@
     (let [md (event-chan @current-app :mouse-drag (chan (async/dropping-buffer 0)))]
       (loop []
         (when-let [[[dx dy :as mdelta] [mx my :as mp]] (<! md)]
-          (swap! system update-cell 'mouse-x mx)
-          (swap! system update-cell 'mouse-y my)
+          (swap! system put-cell 'mouse-x mx)
+          (swap! system put-cell 'mouse-y my)
           ;; (dosync
           ;;  (ref-set mouse-position mp)
           ;;  (ref-set mouse-delta mdelta))
@@ -802,95 +847,26 @@
   (println "Hello, World!"))
 
 
-(! components (group debug
-                     rect))
-(! rwidth 517)
-(! rwidth
-   (case keypress
-     :left
-     (dec rwidth)
-     :right
-     (inc rwidth)
-     rwidth))
-(! rheight 100)
-(! rheight
-   262)
-(! ry 210)
-(! rx 0)
-(! rx 37)
+(! components (group
+               (move x y (label "hi"))))
+
+;; (mypropagator/get-triggees @sheet 't)
+;; (mypropagator/set-cell @sheet 't 10)
+;; (mypropagator/get-triggers @sheet 'components)
+
+(!! x 0 (+ x dx))
+
+(!! dx
+    0
+    (if mouse-down
+      (+ dx (* (- mouse-x x) 0.01))
+      0)
+    [t])
 
 
-(! rect (move rx ry (rectangle rwidth rheight)))
-(! x 10)
-(! y 10)
-(! x (if mouse-down
-       mouse-x
-       x))
-
-(defn val? [cname]
-  (get-in @system [:vals cname]))
-(! val? #'val?)
-
-(! keys [])
-(! keys (if keypress
-          (vec (take-last 10 (conj keys keypress)))
-          keys))
-(! text "")
-(! text (cond
-         (= :back keypress)
-         (subs text 0 (max 0 (dec (count text))))
-
-         (string? keypress)
-         (str text keypress)
-
-         :default text))
-
-(! y 50)
-(! x 10)
-
-(! ys [])
-(! ys (vec (take-last 10 (conj ys mouse-y))))
-(! last-y (second (reverse ys)))
-(! ydelta
-   (if last-y
-    (- mouse-y last-y)
-    0))
-(! xs [])
-(! xs (vec (take-last 10 (conj xs mouse-x))))
-(! last-x (second (reverse xs)))
-(! xdelta
-   (if last-x
-    (- mouse-x last-x)
-    0))
-
-
-
-
-(! y
-   15)
-(! ypad 10)
-(! ypad
-   (case keypress
-     :up
-     (inc ypad)
-     :down
-     (dec ypad)
-     ypad))
-
-(! mouse-down-x
-   (if mouse-down
-     mouse-x
-     mouse-down-x))
-
-(! debug
-   (move x y
-    (apply
-     group
-     (for [[i s v] (map vector (range) ["mouse-x" "mouse-y" "keys" "text" "t1"] [mouse-x mouse-y keys text t1])]
-       (move 10 (+ 10 (* ypad i))
-             (label (str s " " v) ))))))
-
-
-
+(!! y 10 (+ y dy))
+(!! dy 0 (if mouse-down
+           (+ dy (* (- mouse-y y) 0.01))
+           0) [t])
 
 
