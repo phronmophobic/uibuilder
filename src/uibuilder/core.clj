@@ -460,192 +460,197 @@
                       b))
                   (pvalues/default-contradictory?)))
 
-(do
-
-  
-  (def rules
-    '[mouse-x 0
-      mouse-y 0
-      keypress nil
-      mouse-down false
-
-      components nil
-      ])
-
-  (def system (atom (mypropagator/make-sheet)))
-  (def sheet system)  
-  (defn put-cell-init
-    ([sheet cname init]
-       (-> sheet
-           (set-cell cname init)
-           (update-cell-deps cname)))
-    ([sheet cname init expr]
-       (put-cell-init sheet cname init expr (cell-deps cname expr)))
-    ([sheet cname init expr triggers]
-       (-> sheet
-           (set-cell-expr cname expr triggers)
-           (set-cell cname init)
-           (update-cell-deps cname))))
-
-  (defn put-cell
-    ([sheet cname expr]
-       (put-cell sheet cname expr (cell-deps cname expr)))
-    ([sheet cname expr triggers]
-       (-> sheet
-           (set-cell-expr cname expr triggers)
-           (update-cell cname)
-           (update-cell-deps cname))))
-
-  (defmacro ? [cname]
-    `(get-cell @~'sheet (quote ~cname)))
-
-  (defmacro !
-    ([cname expr]
-       `(do
-          (swap! ~'sheet put-cell (quote ~cname) (quote ~expr))
-          (? ~cname)))
-    ([cname expr triggers]
-       `(do
-          (swap! ~'sheet put-cell (quote ~cname) (quote ~expr)
-                 ~(vec
-                   (for [trig triggers]
-                     `(quote ~trig))))
-          (? ~cname))))
-
-
-  (defmacro !!
-    ([cname init]
-       `(do
-          (swap! ~'sheet put-cell-init (quote ~cname) ~init)
-          (? ~cname)))
-    ([cname init expr]
-       `(do
-          (swap! ~'sheet put-cell-init (quote ~cname) ~init (quote ~expr))
-          (? ~cname)))
-    ([cname init expr triggers]
-       `(do
-          (swap! ~'sheet put-cell-init (quote ~cname) ~init
-                 (quote ~expr)
-                 ~(vec
-                   (for [trig triggers]
-                     `(quote ~trig))))
-          (? ~cname))))
 
 
 
+(def rules
+  '[mouse-x 0
+    mouse-y 0
+    keypress nil
+    mouse-down false
+
+    components nil
+    ])
+
+(def system (atom (mypropagator/make-sheet)))
+(def sheet system)
+
+(defn put-cell
+  ([sheet cname expr]
+     (put-cell sheet cname expr (cell-deps cname expr)))
+  ([sheet cname expr triggers]
+     (-> sheet
+         (set-cell-expr cname expr triggers)
+         (update-cell cname)
+         (update-cell-deps cname))))
+
+(defn put-cell-init
+  ([sheet cname init]
+     (-> sheet
+         (set-cell cname init)
+         (update-cell-deps cname)))
+  ([sheet cname init expr]
+     (put-cell-init sheet cname init expr (cell-deps cname expr)))
+  ([sheet cname init expr triggers]
+     (-> sheet
+         (set-cell-expr cname expr triggers)
+         (set-cell cname init)
+         (update-cell-deps cname))))
 
 
-  (swap! system
-         (fn [system]
-           (update-in system [:vals]
-                      merge (ns-publics 'uibuilder.core))))
+
+(defmacro ? [cname]
+  `(get-cell @~'sheet (quote ~cname)))
+
+(defmacro !
+  ([cname expr]
+     `(do
+        (swap! ~'sheet put-cell (quote ~cname) (quote ~expr))
+        (? ~cname)))
+  ([cname expr triggers]
+     `(do
+        (swap! ~'sheet put-cell (quote ~cname) (quote ~expr)
+               ~(vec
+                 (for [trig triggers]
+                   `(quote ~trig))))
+        (? ~cname))))
+
+(defmacro do! [cname expr]
+  `(swap! ~'sheet put-cell (quote ~cname) ~expr))
+
+(defmacro !!
+  ([cname init]
+     `(do
+        (swap! ~'sheet put-cell-init (quote ~cname) ~init)
+        (? ~cname)))
+  ([cname init expr]
+     `(do
+        (swap! ~'sheet put-cell-init (quote ~cname) ~init (quote ~expr))
+        (? ~cname)))
+  ([cname init expr triggers]
+     `(do
+        (swap! ~'sheet put-cell-init (quote ~cname) ~init
+               (quote ~expr)
+               ~(vec
+                 (for [trig triggers]
+                   `(quote ~trig))))
+        (? ~cname))))
 
 
-  (swap! system
-         #(reduce
-           (fn [system [cname expr]]
-             (mypropagator/put-cell system cname expr))
-           %
-           (partition 2 rules)))
 
-  ;; (def rules
-  ;;   '[[?mouse-x 0]
-  ;;     [?mouse-y 0]
-  ;;     [?mouse-down false]
-  ;;     [?t 1]
-  ;;     [?t1 1 (int (/ ?t 1000))]
-  ;;     [?oldts '()
-  ;;      [?t]
-  ;;      (take 2 (cons ?t ?oldts))]
-  ;;     [?lastt 0
-  ;;      (second ?oldts)]
-  ;;     [?dt 1
-  ;;      (if (and ?lastt ?t)
-  ;;        (- ?t ?lastt)
-  ;;        1)]
-  ;;     [?thalf 0 (long (/ ?t 300))]
-  ;;     [?letters []
-  ;;      (cond
-  ;;       (= :back ?keypress)
-  ;;       (vec (butlast ?letters))
 
-  ;;       (string? ?keypress)
-  ;;       (conj ?letters ?keypress)
 
-  ;;       :else
-  ;;       ?letters)]
-  ;;     [(make-button ?mybutton)]
-  ;;     [?acceleration 0.010]
-  ;;     [?keypress ""]
-  ;;     [?dx 0
-  ;;      [?t]
-  ;;      (cond
+(swap! system
+       (fn [system]
+         (update-in system [:vals]
+                    merge (ns-publics 'uibuilder.core))))
 
-  ;;       ?mouse-down
-  ;;       (+ ?dx (* ?acceleration (- ?mouse-x ?mybutton.x)))
-        
-  ;;       (#{100 500} ?mybutton.x)
-  ;;       0
-  ;;       :else ?dx)]
-  ;;     [?mybutton.x 150
-  ;;      [?t]
-  ;;      (let [newx (+ ?mybutton.x ?dx)]
-  ;;       (cond 
-  ;;        (< newx 100)
-  ;;        100
-  ;;        (> newx 500)
-  ;;        500
-  ;;        :else newx))]
-  ;;     [?draw []]
-  ;;     [?components nil
-  ;;      (group
-  ;;       (move 50 150
-  ;;             (label (str "dx: " ?dx )))
-  ;;       (move 50 170
-  ;;             (label (str "dt: " ?dt )))
-  ;;       (move 50 200
-  ;;             (label (str "mouse-x: " ?mouse-x )))
-  ;;       (move 50 250
-  ;;             (label (str "mouse-down: " ?mouse-down )))
 
-  ;;       (move 50 270
-  ;;             (label (str "mybutton.x: " ?mybutton.x )))
-  ;;       (move 50 290
-  ;;             (label (str "keypress: " ?keypress )))
-  ;;       (move 50 310
-  ;;             (label (str "letters: " (apply str ?letters) )))
-  ;;       (apply group ?draw)
-  ;;       ?mybutton.drawable)]])
+(swap! system
+       #(reduce
+         (fn [system [cname expr]]
+           (put-cell system cname expr))
+         %
+         (partition 2 rules)))
 
-  ;; (def rulefns
-  ;;   '[[make-button [?b]
-  ;;      [?b.x 0]
-  ;;      [?b.y 0]
-  ;;      [?b.width 100]
-  ;;      [?b.height 100]
-  ;;      [?b.drawable nil
-  ;;       (group
-  ;;        (move ?b.x ?b.y
-  ;;              (filled-rectangle [0.3 0.3 0.3]
-  ;;                           ?b.width ?b.height)))]]
-  ;;     [center-x [?a ?b]
-  ;;      [?a.x (+ ?b.x
-  ;;               (/ (- ?b.width ?a.width)
-  ;;                  2.0))]
-  ;;      [?b.x (+ ?a.x
-  ;;               (/ (- ?a.width ?b.width)
-  ;;                  2.0))]]])
+;; (def rules
+;;   '[[?mouse-x 0]
+;;     [?mouse-y 0]
+;;     [?mouse-down false]
+;;     [?t 1]
+;;     [?t1 1 (int (/ ?t 1000))]
+;;     [?oldts '()
+;;      [?t]
+;;      (take 2 (cons ?t ?oldts))]
+;;     [?lastt 0
+;;      (second ?oldts)]
+;;     [?dt 1
+;;      (if (and ?lastt ?t)
+;;        (- ?t ?lastt)
+;;        1)]
+;;     [?thalf 0 (long (/ ?t 300))]
+;;     [?letters []
+;;      (cond
+;;       (= :back ?keypress)
+;;       (vec (butlast ?letters))
 
-  ;; (def system (atom (psystem/make-system
-  ;;                    (fn [a b]
-  ;;                      (if (= :propaganda.values/nothing b)
-  ;;                        a
-  ;;                        b))
-  ;;                    (pvalues/default-contradictory?))))
-  ;; (swap! system #(reduce add-rule % rulefns))
-  ;; (swap! system #(reduce apply-rule % rules))
-  
-)
+;;       (string? ?keypress)
+;;       (conj ?letters ?keypress)
+
+;;       :else
+;;       ?letters)]
+;;     [(make-button ?mybutton)]
+;;     [?acceleration 0.010]
+;;     [?keypress ""]
+;;     [?dx 0
+;;      [?t]
+;;      (cond
+
+;;       ?mouse-down
+;;       (+ ?dx (* ?acceleration (- ?mouse-x ?mybutton.x)))
+
+;;       (#{100 500} ?mybutton.x)
+;;       0
+;;       :else ?dx)]
+;;     [?mybutton.x 150
+;;      [?t]
+;;      (let [newx (+ ?mybutton.x ?dx)]
+;;       (cond 
+;;        (< newx 100)
+;;        100
+;;        (> newx 500)
+;;        500
+;;        :else newx))]
+;;     [?draw []]
+;;     [?components nil
+;;      (group
+;;       (move 50 150
+;;             (label (str "dx: " ?dx )))
+;;       (move 50 170
+;;             (label (str "dt: " ?dt )))
+;;       (move 50 200
+;;             (label (str "mouse-x: " ?mouse-x )))
+;;       (move 50 250
+;;             (label (str "mouse-down: " ?mouse-down )))
+
+;;       (move 50 270
+;;             (label (str "mybutton.x: " ?mybutton.x )))
+;;       (move 50 290
+;;             (label (str "keypress: " ?keypress )))
+;;       (move 50 310
+;;             (label (str "letters: " (apply str ?letters) )))
+;;       (apply group ?draw)
+;;       ?mybutton.drawable)]])
+
+;; (def rulefns
+;;   '[[make-button [?b]
+;;      [?b.x 0]
+;;      [?b.y 0]
+;;      [?b.width 100]
+;;      [?b.height 100]
+;;      [?b.drawable nil
+;;       (group
+;;        (move ?b.x ?b.y
+;;              (filled-rectangle [0.3 0.3 0.3]
+;;                           ?b.width ?b.height)))]]
+;;     [center-x [?a ?b]
+;;      [?a.x (+ ?b.x
+;;               (/ (- ?b.width ?a.width)
+;;                  2.0))]
+;;      [?b.x (+ ?a.x
+;;               (/ (- ?a.width ?b.width)
+;;                  2.0))]]])
+
+;; (def system (atom (psystem/make-system
+;;                    (fn [a b]
+;;                      (if (= :propaganda.values/nothing b)
+;;                        a
+;;                        b))
+;;                    (pvalues/default-contradictory?))))
+;; (swap! system #(reduce add-rule % rulefns))
+;; (swap! system #(reduce apply-rule % rules))
+
+
 
 (defn display [[dt t] state]
   (render-mode :solid)
@@ -855,48 +860,107 @@
   (println "Hello, World!"))
 
 
-(! components (group
-               stage
-               paddle
-               ball))
 
-(!! py 10
-    (case keypress
-      :down
-      (+ py 2)
-      :up
-      (- py 2)
-      py)
-    )
-(!! px 20)
-(!! pheight 100)
-
-(! paddle
-   (move px py
-         (rectangle 10 pheight )))
-
-(mypropagator/get-triggees @sheet 'pheight)
-(! stage
-   (rectangle width height))
-
-(! width 500)
-(! height 500)
-
-(!! bx 10
-    (min width (max 0 (+ bx bdx))) [t])
-(!! bdx 30
-    (if (#{0 width} bx)
-      (- bdx)
-      bdx))
-
-(!! by 50
-    (min height (max 0 (+ by bdy))) [t])
-
-(!! bdy 30
-    (if (#{0 height} by)
-      (- bdy)
-      bdy))
+(let [out *out*]
+ (go
+  (let [ch (event-chan @current-app :key-type (chan (async/dropping-buffer 0)))]
+    (binding [*out* out]
+     (dotimes [i 10]
+       (let [k (first (<! ch))]
+         (when (string? k)
+           (println k)
+           (! text (str text k)))))))))
 
 
 
-(! ball (move bx by (arc 10 0 (* 2 Math/PI))))
+;; (!! py 10
+;;     (case keypress
+;;       :down
+;;       (+ py 2)
+;;       :up
+;;       (- py 2)
+;;       py)
+;;     )
+;; (!! px 20)
+;; (!! pheight 100)
+
+;; (! paddle
+;;    (move px py
+;;          (rectangle 10 pheight )))
+
+;; (mypropagator/get-triggees @sheet 'pheight)
+;; (! stage
+;;    (rectangle width height))
+
+;; (! width 500)
+;; (! height 500)
+
+;; (!! bx 10
+;;     (min width (max 0 (+ bx bdx))) [t])
+;; (!! bdx 30
+;;     (if (#{0 width} bx)
+;;       (- bdx)
+;;       bdx))
+
+;; (!! by 50
+;;     (min height (max 0 (+ by bdy))) [t])
+
+;; (!! bdy 30
+;;     (if (#{0 height} by)
+;;       (- bdy)
+;;       bdy))
+
+
+
+;; (! ball (move bx by (arc 10 0 (* 2 Math/PI))))
+;; - move to
+;; - move amount
+;; - chat
+;; - cheats
+;; - find block
+;;   - resource
+;;   - animal
+;; - dig / mine
+;; - fight
+
+(! draw-block
+   (fn [[command & args :as block]]
+     (case command
+       :repeat
+       (group
+        (rectangle 250 (- block-height 5))
+        (move 8 0
+              (group
+               (label (str command))
+               (move 10 30
+                     (apply group (draw-blocks args))))))
+       
+       (group
+        (rectangle 250 (- block-height 5))
+        (move 8 0
+              (label (clojure.string/join " " block)))))))
+
+
+(! draw-blocks
+   (fn [blocks]
+     (for [[i [command & args :as block]] (map-indexed vector blocks)]
+       (move 10 (* i block-height)
+             (draw-block block)))))
+
+(! block-height 50)
+(! block-views
+   (draw-blocks blocks)
+   )
+
+(do! blocks [[:move-by 10 0 20]
+             [:chat "hello"]
+             [:repeat
+              [:chat "woo"]
+              [:move-by 10 0 20]
+              [:dig]
+              [:repeat
+              [:chat ".."]
+              [:move-by 10 0 20]
+              [:dig]]]
+             ])
+(! components (apply group block-views))

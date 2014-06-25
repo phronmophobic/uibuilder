@@ -159,7 +159,8 @@
   (get-triggers [sheet cname])
   (get-triggees [sheet cname])
   (set-cell-fn [sheet cname f trigs dps])
-  ;; need a remove cell
+  ;; need a remove cell-fn
+  )
 
 
 (defn set-cell-expr
@@ -221,7 +222,7 @@
         (do
           (if (visited cname)
             (do
-              (msg "warning! already processed " cname "... skipping...")
+              (msg (str "warning! already processed " cname "... skipping..."))
               (recur sheet (pop queue) visited))
             (let [sheet (update-cell sheet cname)
                   visited (conj visited cname)
