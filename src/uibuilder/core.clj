@@ -20,10 +20,8 @@
                                                   close!
                                                   put!
                                                   take!]]
-            [propaganda.system :as psystem :refer [add-value get-value add-propagator]]
-            [uibuilder.mypropagator :as mypropagator :refer [get-cell set-cell-expr update-cell update-cell-deps cell-deps set-cell]]
-            [propaganda.values :as pvalues]
-)
+            [uibuilder.p2 :refer [defval deffn watch]]
+            [clojure.stacktrace])
   (:import [java.awt Font]
            [java.awt.font TextAttribute]
            [org.newdawn.slick TrueTypeFont]
@@ -39,8 +37,6 @@
 (defn random-string []
   (apply str (for [i (range (rand-int 20))]
                (random-char))))
-
-
 
 (defn seqable?
   "Returns true if (seq x) will succeed, false otherwise."
@@ -87,6 +83,7 @@
                ~field
                (ref ~field))) ))))
 
+
 (defprotocol IDraw
   (draw [this]))
 
@@ -100,7 +97,7 @@
   (-bounds [this]))
 
 (defn bounds [x]
-  (when-not (satisfies? IBounds x) (satisfies? IComponent x)
+  (when-not (or (satisfies? IBounds x) (satisfies? IComponent x))
     (throw (Exception. (str "Expecting IBounds or IComponent, got " x))))
   (if (satisfies? IBounds x)
     (-bounds x)
@@ -211,7 +208,7 @@
     [x y])
   IChildren
   (-children [this]
-    [~drawable])
+    [drawable])
   IBounds
   (-bounds [this]
     (bounds drawable))
@@ -222,50 +219,6 @@
      (draw drawable))))
 (defn move [x y drawable]
   (Move. x y drawable))
-
-(defn myempty [o]
-  (if (instance? clojure.lang.IRecord o)
-    o
-    (empty o)))
-
-(defn walk
-  "Traverses form, an arbitrary data structure.  inner and outer are
-  functions.  Applies inner to each element of form, building up a
-  data structure of the same type, then applies outer to the result.
-  Recognizes all Clojure data structures. Consumes seqs as with doall."
-
-  {:added "1.1"}
-  [inner outer form]
-  (cond
-   (list? form) (outer (apply list (map inner form)))
-   (instance? clojure.lang.IMapEntry form) (outer (vec (map inner form)))
-   (seq? form) (outer (doall (map inner form)))
-   (coll? form) (outer (into (myempty form) (map inner form)))
-   :else (outer form)))
-
-;; (defn postwalk
-;;   "Performs a depth-first, post-order traversal of form.  Calls f on
-;;   each sub-form, uses f's return value in place of the original.
-;;   Recognizes all Clojure data structures. Consumes seqs as with doall."
-;;   {:added "1.1"}
-;;   [f form]
-;;   (walk (partial postwalk f) f form))
-
-(defn prewalk
-  "Like postwalk, but does pre-order traversal."
-  {:added "1.1"}
-  [f form]
-  (walk (partial prewalk f) identity (f form)))
-
-
-(defn deref-all [form]
-  (prewalk
-   (fn [form]
-     (if (instance? clojure.lang.IDeref form)
-       @form
-       form))
-   form))
-
 
 (defcomponent Path [points]
   IBounds
@@ -322,22 +275,12 @@
 (defn filled-rectangle [color width height]
   (polygon color [0 0] [0 height]  [width height] [width 0]  [0 0]))
 
-
-
-(defn maybe-ref [val]
-  (if (instance? clojure.lang.IDeref val)
-    val
-    (ref val)))
-
-
-(declare system)
 (defn update-state [state]
-  (swap! system put-cell 't  (.getTime (Date.)))
   state)
 
 (defn init [state]
   (render-mode :wireframe)
-  (app/periodic-update! 30  #'update-state )
+  ;; (app/periodic-update! 30  #'update-state )
   (app/vsync! true)
   state)
 
@@ -350,319 +293,17 @@
 
 
 
-;; (defn same [system & cells]
-;;   (reduce
-;;    (fn [system [a b]]
-;;      (add-propagator
-;;       system
-;;       [a]
-;;       (fn [system]
-;;         (update-cell system
-;;                    b
-;;                    (get-value system a)))))
-;;    system
-;;    (conj (map vector cells (rest cells))
-;;          [(last cells) (first cells)])))
-
-
-
-(defn apply-simple-rule [system rule]
-  (let [[cellname constant deps expr]
-        (case (count rule)
-          (2 4)
-          rule
-          3
-          (let [[cellname constant expr] rule
-                deps (->> expr
-                          (tree-seq seqable? seq)
-                          (filter #(and (symbol? %)
-                                        (.startsWith (name %) "?")))
-                          (distinct)
-                          (remove (partial = cellname)))]
-           [cellname constant deps expr])
-
-          (throw (Exception. "Invalid number of arguments for rule")))
-        system-cells (->> expr
-                          (tree-seq seqable? seq)
-                          (filter #(and (symbol? %)
-                                        (.startsWith (name %) "?")))
-                          (distinct))
-        system (add-value system cellname (eval constant))
-        system (if (nil? expr)
-                 system
-                 (let [symbolfy (fn [sym]
-                                  (-> sym
-                                      str
-                                      rest
-                                      (->> (apply str))
-                                      symbol))
-                       system-sym (gensym "system")
-                       expr (clojure.walk/postwalk-replace
-                             (into {}
-                                   (for [cell system-cells]
-                                     [cell `(get-value ~system-sym '~cell)]))
-                             expr)
-                       propagtor-raw `(fn [~system-sym]
-                                        (if (some (partial = :propaganda.values/nothing)
-                                                  (map (partial get-value ~system-sym)
-                                                       [~@(map (partial list 'quote) system-cells)]))
-                                          ~system-sym
-                                          (add-value ~system-sym '~cellname
-                                                     ~expr)))
-                       ;; _ (clojure.pprint/pprint propagtor-raw)
-                       propagator-fn (eval
-                                      propagtor-raw)]
-                   (add-propagator system
-                                   deps
-                                   propagator-fn)))]
-    system))
-
-
-(defn add-rule [system rule]
-  (let [[rule-name & rest] rule]
-    (assoc-in system [:rules rule-name] rest)))
-
-
-(defn expand-rule-fn [system rule]
-  (let [[[rule-name & args]] rule
-        [args* & subrules*] (get-in system [:rules rule-name])
-        syms-map (into {} (map vector  args* args))
-        subrules (clojure.walk/postwalk
-                  (fn [form]
-                    (if-let [sym (->> (map first syms-map)
-                                      (filter #(and (symbol? form)
-                                                    (.startsWith (name form) (str % "."))))
-                                      first)]
-                      (symbol (str (get syms-map sym) "." (subs (name form) (inc (.indexOf (name form) ".")))))
-                      form))
-                  subrules*)
-        subrules (clojure.walk/postwalk-replace
-                  syms-map
-                  subrules)]
-    subrules))
-
-
-
-
-
-
-(defn apply-rule [system rule]
-  ;; (println "addring rule " rule)
-  (if (list? (first rule))
-    (reduce apply-rule system (expand-rule-fn system rule))
-    (apply-simple-rule system rule)))
-
-
-(def test-system (psystem/make-system
-                  (fn [a b]
-                    (if (= :propaganda.values/nothing b)
-                      a
-                      b))
-                  (pvalues/default-contradictory?)))
-
-
-
-
-(def rules
-  '[mouse-x 0
-    mouse-y 0
-    keypress nil
-    mouse-down false
-
-    components nil
-    ])
-
-(def system (atom (mypropagator/make-sheet)))
-(def sheet system)
-
-(defn put-cell
-  ([sheet cname expr]
-     (put-cell sheet cname expr (cell-deps cname expr)))
-  ([sheet cname expr triggers]
-     (-> sheet
-         (set-cell-expr cname expr triggers)
-         (update-cell cname)
-         (update-cell-deps cname))))
-
-(defn put-cell-init
-  ([sheet cname init]
-     (-> sheet
-         (set-cell cname init)
-         (update-cell-deps cname)))
-  ([sheet cname init expr]
-     (put-cell-init sheet cname init expr (cell-deps cname expr)))
-  ([sheet cname init expr triggers]
-     (-> sheet
-         (set-cell-expr cname expr triggers)
-         (set-cell cname init)
-         (update-cell-deps cname))))
-
-
-
-(defmacro ? [cname]
-  `(get-cell @~'sheet (quote ~cname)))
-
-(defmacro !
-  ([cname expr]
-     `(do
-        (swap! ~'sheet put-cell (quote ~cname) (quote ~expr))
-        (? ~cname)))
-  ([cname expr triggers]
-     `(do
-        (swap! ~'sheet put-cell (quote ~cname) (quote ~expr)
-               ~(vec
-                 (for [trig triggers]
-                   `(quote ~trig))))
-        (? ~cname))))
-
-(defmacro do! [cname expr]
-  `(swap! ~'sheet put-cell (quote ~cname) ~expr))
-
-(defmacro !!
-  ([cname init]
-     `(do
-        (swap! ~'sheet put-cell-init (quote ~cname) ~init)
-        (? ~cname)))
-  ([cname init expr]
-     `(do
-        (swap! ~'sheet put-cell-init (quote ~cname) ~init (quote ~expr))
-        (? ~cname)))
-  ([cname init expr triggers]
-     `(do
-        (swap! ~'sheet put-cell-init (quote ~cname) ~init
-               (quote ~expr)
-               ~(vec
-                 (for [trig triggers]
-                   `(quote ~trig))))
-        (? ~cname))))
-
-
-
-
-
-(swap! system
-       (fn [system]
-         (update-in system [:vals]
-                    merge (ns-publics 'uibuilder.core))))
-
-
-(swap! system
-       #(reduce
-         (fn [system [cname expr]]
-           (put-cell system cname expr))
-         %
-         (partition 2 rules)))
-
-;; (def rules
-;;   '[[?mouse-x 0]
-;;     [?mouse-y 0]
-;;     [?mouse-down false]
-;;     [?t 1]
-;;     [?t1 1 (int (/ ?t 1000))]
-;;     [?oldts '()
-;;      [?t]
-;;      (take 2 (cons ?t ?oldts))]
-;;     [?lastt 0
-;;      (second ?oldts)]
-;;     [?dt 1
-;;      (if (and ?lastt ?t)
-;;        (- ?t ?lastt)
-;;        1)]
-;;     [?thalf 0 (long (/ ?t 300))]
-;;     [?letters []
-;;      (cond
-;;       (= :back ?keypress)
-;;       (vec (butlast ?letters))
-
-;;       (string? ?keypress)
-;;       (conj ?letters ?keypress)
-
-;;       :else
-;;       ?letters)]
-;;     [(make-button ?mybutton)]
-;;     [?acceleration 0.010]
-;;     [?keypress ""]
-;;     [?dx 0
-;;      [?t]
-;;      (cond
-
-;;       ?mouse-down
-;;       (+ ?dx (* ?acceleration (- ?mouse-x ?mybutton.x)))
-
-;;       (#{100 500} ?mybutton.x)
-;;       0
-;;       :else ?dx)]
-;;     [?mybutton.x 150
-;;      [?t]
-;;      (let [newx (+ ?mybutton.x ?dx)]
-;;       (cond 
-;;        (< newx 100)
-;;        100
-;;        (> newx 500)
-;;        500
-;;        :else newx))]
-;;     [?draw []]
-;;     [?components nil
-;;      (group
-;;       (move 50 150
-;;             (label (str "dx: " ?dx )))
-;;       (move 50 170
-;;             (label (str "dt: " ?dt )))
-;;       (move 50 200
-;;             (label (str "mouse-x: " ?mouse-x )))
-;;       (move 50 250
-;;             (label (str "mouse-down: " ?mouse-down )))
-
-;;       (move 50 270
-;;             (label (str "mybutton.x: " ?mybutton.x )))
-;;       (move 50 290
-;;             (label (str "keypress: " ?keypress )))
-;;       (move 50 310
-;;             (label (str "letters: " (apply str ?letters) )))
-;;       (apply group ?draw)
-;;       ?mybutton.drawable)]])
-
-;; (def rulefns
-;;   '[[make-button [?b]
-;;      [?b.x 0]
-;;      [?b.y 0]
-;;      [?b.width 100]
-;;      [?b.height 100]
-;;      [?b.drawable nil
-;;       (group
-;;        (move ?b.x ?b.y
-;;              (filled-rectangle [0.3 0.3 0.3]
-;;                           ?b.width ?b.height)))]]
-;;     [center-x [?a ?b]
-;;      [?a.x (+ ?b.x
-;;               (/ (- ?b.width ?a.width)
-;;                  2.0))]
-;;      [?b.x (+ ?a.x
-;;               (/ (- ?a.width ?b.width)
-;;                  2.0))]]])
-
-;; (def system (atom (psystem/make-system
-;;                    (fn [a b]
-;;                      (if (= :propaganda.values/nothing b)
-;;                        a
-;;                        b))
-;;                    (pvalues/default-contradictory?))))
-;; (swap! system #(reduce add-rule % rulefns))
-;; (swap! system #(reduce apply-rule % rules))
-
-
-
+(defval components nil)
 (defn display [[dt t] state]
   (render-mode :solid)
 
   (let [[x-origin y-origin w h] @penumbra.opengl.core/*view*]
-    (let [root (get-cell @system 'components)]
-      (when-not (= root :propaganda.values/nothing)
-        (with-projection (ortho-view x-origin (+ x-origin w) (+ y-origin h) y-origin -1 1)
-          (push-matrix
-           (load-identity)
-           (TextureImpl/bindNone)
-           (draw root))))))
+    (when-let [root @components]
+      (with-projection (ortho-view x-origin (+ x-origin w) (+ y-origin h) y-origin -1 1)
+        (push-matrix
+         (load-identity)
+         (TextureImpl/bindNone)
+         (draw root)))))
 
   )
 
@@ -673,9 +314,8 @@
 
 (defn mouse-drag [[dx dy] [x y] button state]
   "Called when mouse moves with a button pressed. [dx dy] contains relative motion since last time :mouse-drag was called, and [x y] contains absolute position of the mouse. button will be equal to one of :left, :right, :center, :mouse-4, or :mouse-5. If the mouse is moving when two or more buttons are pressed, :mouse-drag will be called once for each button."
-  (swap! system put-cell 'mouse-x x)
-  (swap! system put-cell 'mouse-y y)
   state)
+
 
 (defn box-contains? [[x y width height] [px py]]
   (and (<= px (+ x width))
@@ -686,26 +326,18 @@
 
 (defn mouse-move [[dx dy] [mx my] state]
   "Called the same as :mouse-drag, but when no button is pressed."
-  (swap! system put-cell 'mouse-x mx)
-  (swap! system put-cell 'mouse-y my)
   state)
 
 
 
 (defn mouse-down [[x y] button state]
   "Called whenever a button is pressed."
-  (swap! system put-cell 'mouse-x x)
-  (swap! system put-cell 'mouse-y y)
-  (swap! system put-cell 'mouse-down true)
   (-> state
       (assoc :move-hello? (not (:move-hello? state)))))
 
 
 (defn mouse-up [[x y] button state]
   "Called whenever a button is released."
-  (swap! system put-cell 'mouse-x x)
-  (swap! system put-cell 'mouse-y y)
-  (swap! system put-cell 'mouse-down false)
   (-> state
       (assoc :mousedown false)))
 
@@ -718,9 +350,6 @@
 (defn key-press [key state]
   "Called whenever a key is pressed. If the key is something that would normally show up in a text entry field, key is a case-sensitive string. Examples include “a”, “&”, and " ". If it is not, key is a keyword. Examples include :left, :control, and :escape"
 
-  
-  (swap! system put-cell 'keypress nil)
-  (swap! system put-cell 'keypress key)
 
   state)
 
@@ -794,14 +423,11 @@
     (<! (event-chan @current-app :init))
     (let [md (event-chan @current-app :mouse-drag (chan (async/dropping-buffer 0)))]
       (loop []
-        (when-let [[[dx dy :as mdelta] [mx my :as mp]] (<! md)]
-          (swap! system put-cell 'mouse-x mx)
-          (swap! system put-cell 'mouse-y my)
-          ;; (dosync
-          ;;  (ref-set mouse-position mp)
-          ;;  (ref-set mouse-delta mdelta))
-          
-          (recur)))))
+        (when-let [[[dx dy :as mdelta] [mx my :as mp] button] (<! md)]
+          (defval mouse-x mx)
+          (defval mouse-y my)
+          )
+        (recur))))
    #_(go
       (<! (event-chan @current-app :init))
       (let [mu (event-chan @current-app :mouse-up (chan (async/dropping-buffer 0)))]
@@ -816,42 +442,6 @@
   )
 
 
-
-
-
-;; (defcomponent rich-text-editor
-;;   :things
-;;   [[:toolbar
-;;     [:toggle :#bold]
-;;     [:toggle :#italics "itatlics"]
-;;     [:toggle :#underline]
-;;     [:dropdown :#font ["Normal"
-;;                        "Courier New"
-;;                        "Georgia"]]
-;;     [:toggle :#bullets "bullets"]
-;;     [:toggle :#left-aligned]
-;;     [:toggle :#right-aligned]
-;;     [:toggle :#center-aligned]]
-;;    [:textarea]]
-;;   :rules
-;;   [(stack :toolbar :textarea)
-;;    (one-selected [:#left-aligned
-;;                   :#right-aligned
-;;                   :#center-aligned])
-;;    (= (:textarea/bold) :#bold/on)
-;;    (= (:textarea/italics) :#italics/on)
-;;    (= (:textarea/underline) :#underline/on)
-;;    (= (:textarea/font) :#font/on)
-;;    (= (:textarea/bullets) :#bullets/on)
-;;    (= (:textarea/alignment) (cond
-;;                              (selected #left-aligned) :left
-;;                              (selected #right-aligned) :right
-;;                              (selected #center-aligned) :center))
-;; ])
-
-
-
-
 (defn -main
   "I don't do a whole lot ... yet."
   [& args]
@@ -860,107 +450,119 @@
   (println "Hello, World!"))
 
 
+(break)
+
+(add-watch components :redraw
+           (fn [k r o n]
+             (app/repaint! @current-app)))
+
+(defval x 10)
+(defval y (or mouse-x 10))
+(defval mouse-x 0)
+(defval mouse-y 0)
+
+(deffn make-label [s x y]
+  (move x y
+        (label s)))
+
+(defval selected nil)
+
+
+(defn find-click [root [x y]]
+  (let [[ox oy] (origin root)
+        [width height] (bounds root)
+        _x (- x ox)
+        _y (- y oy)]
+   (if-let [clicked (first (keep #(find-click % [_x _y]) (children root)))]
+     clicked
+     (if (box-contains? [ox oy width height] [x y])
+       root
+       nil))))
+
+(defn on-click [[[x y] button]]
+  (let [s (find-click @components [x y] )]
+     (defval selected s))
+  )
 
 (let [out *out*]
  (go
-  (let [ch (event-chan @current-app :key-type (chan (async/dropping-buffer 0)))]
-    (binding [*out* out]
-     (dotimes [i 10]
-       (let [k (first (<! ch))]
-         (when (string? k)
-           (println k)
-           (! text (str text k)))))))))
+  (try
+    (let [ch (event-chan @current-app :mouse-up)]
+      (loop []
+        (when-let [click (<! ch)]
+          (#'on-click click)
+          (recur))))
+    (catch Exception e
+      (binding [*out* out]
+        (println (with-out-str
+                   (clojure.stacktrace/print-stack-trace e))))))))
+
+(defn on-key [[key]]
+  (println key)
+  (if (instance? Label @selected)
+    (defval typed [] (cond
+                      (= key :back)
+                      (subs @typed 0 (dec (count @typed)))
+
+                      (string? key)
+                      (apply str @typed key)))))
+
+(let [out *out*]
+ (go
+  (try
+    (let [ch (event-chan @current-app :key-press)]
+      (loop []
+        (when-let [key (<! ch)]
+          (#'on-key key)
+          (recur))))
+    (catch Exception e
+      (binding [*out* out]
+        (println (with-out-str
+                   (clojure.stacktrace/print-stack-trace e))))))))
+
+(defval hover-rect (filled-rectangle hover-color 70 70))
+(defval hover-color [1 1 1])
+(let [out *out*]
+ (go
+  (try
+    (let [ch (event-chan @current-app :mouse-move)]
+      (loop []
+        (when-let [[_ pos] (<! ch)]
+          (defval hover-color []
+            (if (= @hover-rect (find-click @components pos))
+              [1 0 0]
+              [0 1 0]) )
+          
+          (recur))))
+    (catch Exception e
+      (binding [*out* out]
+        (println (with-out-str
+                   (clojure.stacktrace/print-stack-trace e))))))))
+
+(defval typed "")
+(defval test-label (make-label (str "typed: " typed) 20 20 ))
 
 
 
-;; (!! py 10
-;;     (case keypress
-;;       :down
-;;       (+ py 2)
-;;       :up
-;;       (- py 2)
-;;       py)
-;;     )
-;; (!! px 20)
-;; (!! pheight 100)
+(defval components (group
+                    test-label
+                    (make-label (str "selected: " selected) 20 50 )
+                    (move 50 100
+                          hover-rect)
+                    (move 50 200
+                     (rectangle 100 200))
+))
 
-;; (! paddle
-;;    (move px py
-;;          (rectangle 10 pheight )))
-
-;; (mypropagator/get-triggees @sheet 'pheight)
-;; (! stage
-;;    (rectangle width height))
-
-;; (! width 500)
-;; (! height 500)
-
-;; (!! bx 10
-;;     (min width (max 0 (+ bx bdx))) [t])
-;; (!! bdx 30
-;;     (if (#{0 width} bx)
-;;       (- bdx)
-;;       bdx))
-
-;; (!! by 50
-;;     (min height (max 0 (+ by bdy))) [t])
-
-;; (!! bdy 30
-;;     (if (#{0 height} by)
-;;       (- bdy)
-;;       bdy))
+@test-label
 
 
 
-;; (! ball (move bx by (arc 10 0 (* 2 Math/PI))))
-;; - move to
-;; - move amount
-;; - chat
-;; - cheats
-;; - find block
-;;   - resource
-;;   - animal
-;; - dig / mine
-;; - fight
-
-(! draw-block
-   (fn [[command & args :as block]]
-     (case command
-       :repeat
-       (group
-        (rectangle 250 (- block-height 5))
-        (move 8 0
-              (group
-               (label (str command))
-               (move 10 30
-                     (apply group (draw-blocks args))))))
-       
-       (group
-        (rectangle 250 (- block-height 5))
-        (move 8 0
-              (label (clojure.string/join " " block)))))))
 
 
-(! draw-blocks
-   (fn [blocks]
-     (for [[i [command & args :as block]] (map-indexed vector blocks)]
-       (move 10 (* i block-height)
-             (draw-block block)))))
 
-(! block-height 50)
-(! block-views
-   (draw-blocks blocks)
-   )
 
-(do! blocks [[:move-by 10 0 20]
-             [:chat "hello"]
-             [:repeat
-              [:chat "woo"]
-              [:move-by 10 0 20]
-              [:dig]
-              [:repeat
-              [:chat ".."]
-              [:move-by 10 0 20]
-              [:dig]]]
-             ])
-(! components (apply group block-views))
+
+
+
+
+
