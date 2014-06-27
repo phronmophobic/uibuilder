@@ -65,11 +65,12 @@
 
 
 
-(defn- -defval [name deps val]
+(defn- -defval [name locals deps val]
   (let [deps (->> deps
                   (remove #{name})
                   (filter (set (keys (:refs @*root*))))
                   ;; should filter locals too!
+                  (remove (set (keys locals)))
                   set)
         ]
     `(do
@@ -86,9 +87,9 @@
 
 (defmacro defval
   ([name val]
-     (-defval name (cell-deps val) val))
+     (-defval name &env (cell-deps val) val))
   ([name deps val]
-     (-defval name deps val)))
+     (-defval name &env deps val)))
 
 (defmacro deffn [name & args]
   `(defval ~name (fn ~@args)))
