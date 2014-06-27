@@ -32,6 +32,8 @@
            [org.newdawn.slick.opengl TextureImpl])
   (:gen-class))
 
+
+
 (defn random-char []
   (rand-nth "abcdefghijklmnopqrstuvwxyz"))
 (defn random-string []
@@ -456,8 +458,6 @@
            (fn [k r o n]
              (app/repaint! @current-app)))
 
-(defval x 10)
-(defval y (or mouse-x 10))
 (defval mouse-x 0)
 (defval mouse-y 0)
 
@@ -543,23 +543,42 @@
 (defval test-label (make-label (str "typed: " typed) 20 20 ))
 
 
+(defval current-label
+  (let [{:keys [x y s]} current]
+    (when (and x y s)
+      (move x y (label s)))))
 
-(defval components (group
-                    test-label
-                    (make-label (str "selected: " selected) 20 50 )
-                    (move 50 100
-                          hover-rect)
-                    (move 50 200
-                     (rectangle 100 200))
-))
+(defval current {})
+(defval components
+  (group
+   test-label
+   (make-label (str "selected: " selected) 20 50 )
+   (move 50 100
+         hover-rect)
+   (move 50 200
+         (rectangle 100 200))
+   current-label
+   ))
 
-@test-label
-
-
-
-
-
-
+(let [out *out*]
+ (go
+  (try
+    (dotimes [i 4]
+      (defval current {})
+      (let [[[mx my] button] (<! (event-chan @current-app :mouse-up))
+            kch (event-chan @current-app :key-press)]
+        
+        (loop []
+          (let [[k] (<! kch)]
+            (defval current {:x mx
+                             :y my
+                             :s (str (:s @current) k)})
+            (when-not (= k :return)
+              (recur))))))
+    (catch Exception e
+      (binding [*out* out]
+        (println (with-out-str
+                   (clojure.stacktrace/print-stack-trace e))))))))
 
 
 
